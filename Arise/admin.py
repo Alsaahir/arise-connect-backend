@@ -4,5 +4,7 @@ from .models import *
 
 admin.site.register(User)
 admin.site.register(Staff)
+admin.site.register(Story)
+
 
 

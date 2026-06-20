@@ -7,7 +7,11 @@ from rest_framework.decorators import api_view
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.exceptions import ObjectDoesNotExist
-from .models import Staff, PasswordResetOTP
+from .models import Staff, PasswordResetOTP, Story, Student, Community
+from .serializers import StorySerializer, StudentSerializer
+
+
+
 import string
 import random
 from django.core.mail import send_mail
@@ -59,6 +63,10 @@ def getRoutes(request):
         {'POST': 'api/token/verify/'},
         {'PATCH': 'api/staff/complete/'},
         {'POST': 'api/staff/create/'},
+        {'GET/POST': 'api/stories/'},
+        {'GET/PUT/DELETE': 'api/stories/<uuid:pk>/'},
+        {'GET/POST': 'api/students/'},
+        {'GET/PUT/DELETE': 'api/students/<uuid:pk>/'},
     ]
     return Response(routes)
 
@@ -243,7 +251,7 @@ Arise Connect Team"""
 
 class PasswordResetRequestView(APIView):
     def post(self, request):
-        email = request.data.get('email', '')
+        email = request.data.get('email', '').strip()
         if not email:
             return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -251,13 +259,15 @@ class PasswordResetRequestView(APIView):
         
         User = get_user_model()
         try:
-            user = User.objects.get(email=email)
+            user = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
             return Response({"detail": "No user account found with this email address."}, status=status.HTTP_404_NOT_FOUND)
         
         import random
         otp = "".join(random.choices("0123456789", k=5))
         
+        email=user.email
+
         PasswordResetOTP.objects.update_or_create(
             email=email,
             defaults={'otp': otp}
@@ -287,11 +297,10 @@ Arise Connect Team"""
             )
         except Exception as e:
             print(f"Failed to send password reset OTP: {e}")
-            print(f"PASSWORD RESET OTP (for development): {otp}")
             if settings.DEBUG:
+                print(f"\n========================================\n[DEBUG] PASSWORD RESET OTP FOR {user.email}: {otp}\n========================================\n")
                 return Response({
-                    "detail": "Failed to send email, but here is the OTP (debug mode):",
-                    "otp": otp
+                    "detail": "A 5-digit OTP has been generated (sent to console due to email configuration error)."
                 }, status=status.HTTP_200_OK)
             return Response({"detail": "Error sending email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
@@ -300,7 +309,7 @@ Arise Connect Team"""
 
 class PasswordResetVerifyOTPView(APIView):
     def post(self, request):
-        email = request.data.get('email', '')
+        email = request.data.get('email', '').strip()
         otp = request.data.get('otp', '')
         
         if not email or not otp:
@@ -311,7 +320,7 @@ class PasswordResetVerifyOTPView(APIView):
         from .models import PasswordResetOTP
         
         try:
-            otp_record = PasswordResetOTP.objects.get(email=email)
+            otp_record = PasswordResetOTP.objects.get(email__iexact=email)
         except PasswordResetOTP.DoesNotExist:
             return Response({"detail": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
             
@@ -326,7 +335,7 @@ class PasswordResetVerifyOTPView(APIView):
         
         User = get_user_model()
         try:
-            user = User.objects.get(email=email)
+            user = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
             return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
             
@@ -406,4 +415,186 @@ class PasswordResetConfirmView(APIView):
             "refresh": str(refresh),
             "staff": staff_data
         }, status=status.HTTP_200_OK)
+
+
+class ContactSubmitView(APIView):
+    def post(self, request):
+        name = request.data.get('name', '').strip()
+        email = request.data.get('email', '').strip()
+        subject = request.data.get('subject', '').strip()
+        message = request.data.get('message', '').strip()
+        
+        if not name or not email or not subject or not message:
+            return Response({"detail": "All fields (name, email, subject, message) are required."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        email_subject = f"[Contact Form] {subject}"
+        email_message = f"""You received a new message from the contact form:
+
+Name: {name}
+Email: {email}
+Subject: {subject}
+
+Message:
+{message}
+"""
+        from django.core.mail import EmailMessage
+        try:
+            email_msg = EmailMessage(
+                subject=email_subject,
+                body=email_message,
+                from_email=settings.DEFAULT_FROM_EMAIL or 'noreply@ariseconnect.org',
+                to=[settings.DEFAULT_FROM_EMAIL or 'jacobdjango7@gmail.com'],
+                reply_to=[email],
+            )
+            email_msg.send(fail_silently=False)
+        except Exception as e:
+            print(f"Failed to send contact email: {e}")
+            return Response({"detail": "Failed to send email. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+        return Response({"detail": "Thank you for your message! We will get back to you soon."}, status=status.HTTP_200_OK)
+
+
+class StoryListCreateView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        stories = Story.objects.all().order_by('-created_at')
+        serializer = StorySerializer(stories, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = StorySerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StoryDetailView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_object(self, pk):
+        try:
+            return Story.objects.get(pk=pk)
+        except Story.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        story = self.get_object(pk)
+        if not story:
+            return Response({"detail": "Story not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StorySerializer(story)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request, pk):
+        story = self.get_object(pk)
+        if not story:
+            return Response({"detail": "Story not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StorySerializer(story, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        story = self.get_object(pk)
+        if not story:
+            return Response({"detail": "Story not found."}, status=status.HTTP_404_NOT_FOUND)
+        story.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class StudentListCreateView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        students = Student.objects.all().order_by('-created_at')
+        serializer = StudentSerializer(students, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        data = request.data.copy()
+        if 'Student_number' not in data or not data['Student_number']:
+            import random
+            while True:
+                num = random.randint(100000, 999999)
+                if not Student.objects.filter(Student_number=num).exists():
+                    data['Student_number'] = num
+                    break
+
+        school_name = request.data.get('school', '')
+        cso_name = request.data.get('cso', '')
+
+        if school_name:
+            community, _ = Community.objects.get_or_create(Name=school_name)
+            data['Community_id'] = str(community.id)
+
+        if cso_name:
+            staff = Staff.objects.filter(full_name__iexact=cso_name).first()
+            if not staff:
+                User = get_user_model()
+                username = cso_name.lower().replace(' ', '.')
+                user_email = f"{username}@example.com"
+                user = User.objects.filter(email=user_email).first()
+                if not user:
+                    user = User.objects.create_user(
+                        email=user_email,
+                        password='Password123',
+                        first_name=cso_name.split()[0] if cso_name.split() else cso_name,
+                        last_name=cso_name.split()[1] if len(cso_name.split()) > 1 else '',
+                        is_active=True,
+                        is_staff=True,
+                        is_superuser=False
+                    )
+                staff = Staff.objects.create(
+                    user=user,
+                    full_name=cso_name,
+                    email=user_email,
+                    account_type='CSO',
+                    is_active=True
+                )
+            data['CSO_id'] = str(staff.id)
+
+        serializer = StudentSerializer(data=data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StudentDetailView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_object(self, pk):
+        try:
+            return Student.objects.get(pk=pk)
+        except Student.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        student = self.get_object(pk)
+        if not student:
+            return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StudentSerializer(student)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def put(self, request, pk):
+        student = self.get_object(pk)
+        if not student:
+            return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = StudentSerializer(student, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        student = self.get_object(pk)
+        if not student:
+            return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+        student.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+
 

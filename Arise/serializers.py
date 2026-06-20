@@ -1,6 +1,23 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.core.exceptions import ObjectDoesNotExist
-from .models import Staff
+from rest_framework import serializers
+from .models import Staff, Story, Student
+
+class StorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Story
+        fields = '__all__'
+
+class StudentSerializer(serializers.ModelSerializer):
+    Community_name = serializers.CharField(source='Community_id.Name', read_only=True)
+    CSO_name = serializers.CharField(source='CSO_id.full_name', read_only=True)
+
+    class Meta:
+        model = Student
+        fields = '__all__'
+
+
+
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
