@@ -1,0 +1,43 @@
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from django.core.exceptions import ObjectDoesNotExist
+from .models import Staff
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        
+        user = self.user
+        staff_data = None
+        try:
+            staff = user.staff
+        except ObjectDoesNotExist:
+            # Auto-create staff for ease of testing if they don't exist
+            # Using email as username is setup, so we use email
+            staff = Staff.objects.create(
+                user=user,
+                email=user.email,
+                full_name=f"{user.first_name} {user.last_name}".strip() if (user.first_name or user.last_name) else user.email,
+                account_type="Sponsor"  # default account type
+            )
+        
+        staff_data = {
+            "id": str(staff.id),
+            "full_name": staff.full_name,
+            "email": staff.email,
+            "phone_number": staff.phone_number,
+            "job_title": staff.job_title,
+            "community": str(staff.community) if staff.community else None,
+            "station": staff.station,
+            "account_type": staff.account_type,
+            "address_line_1": staff.address_line_1,
+            "address_line_2": staff.address_line_2,
+            "country": staff.country,
+            "state": staff.state,
+            "city": staff.city,
+            "zip_code": staff.zip_code,
+            "is_active": staff.is_active,
+            "is_complete": staff.is_complete,
+        }
+        
+        data['staff'] = staff_data
+        return data
