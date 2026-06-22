@@ -14,6 +14,8 @@ urlpatterns = [
     path('api/stories/<uuid:pk>/', views.StoryDetailView.as_view(), name='story_detail'),
     path('api/students/', views.StudentListCreateView.as_view(), name='student_list_create'),
     path('api/students/<uuid:pk>/', views.StudentDetailView.as_view(), name='student_detail'),
+    path('api/sponsor/signup/', views.SponsorSignUpView.as_view(), name='sponsor_signup'),
+    path('api/sponsor/verify-email/', views.SponsorVerifyEmailView.as_view(), name='sponsor_verify_email'),
 ]
 
 

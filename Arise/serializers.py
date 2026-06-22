@@ -1,16 +1,40 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
-from .models import Staff, Story, Student
+from .models import Staff, Story, Student, GuardianInformation, DemographicHealthDetails, HealthConditions, Report
 
 class StorySerializer(serializers.ModelSerializer):
     class Meta:
         model = Story
         fields = '__all__'
 
+class GuardianInformationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GuardianInformation
+        fields = '__all__'
+
+class DemographicHealthDetailsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DemographicHealthDetails
+        fields = '__all__'
+
+class HealthConditionsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HealthConditions
+        fields = '__all__'
+
+class ReportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Report
+        fields = '__all__'
+
 class StudentSerializer(serializers.ModelSerializer):
     Community_name = serializers.CharField(source='Community_id.Name', read_only=True)
     CSO_name = serializers.CharField(source='CSO_id.full_name', read_only=True)
+    guardians = GuardianInformationSerializer(many=True, read_only=True)
+    demographics = DemographicHealthDetailsSerializer(many=True, read_only=True)
+    health_conditions = HealthConditionsSerializer(many=True, read_only=True)
+    reports = ReportSerializer(many=True, read_only=True)
 
     class Meta:
         model = Student
@@ -28,8 +52,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         try:
             staff = user.staff
         except ObjectDoesNotExist:
-            # Auto-create staff for ease of testing if they don't exist
-            # Using email as username is setup, so we use email
+           
             staff = Staff.objects.create(
                 user=user,
                 email=user.email,

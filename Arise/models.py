@@ -93,6 +93,7 @@ class PasswordResetOTP(models.Model):
 class Sponsor(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     User = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, db_column='User')
+    staff = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='staff', related_name='sponsors')
     Full_name = models.CharField(max_length=255, null=True, blank=True)
     Email = models.EmailField(max_length=255, null=True, blank=True)
     Phone_number = models.CharField(max_length=50, null=True, blank=True)
@@ -103,11 +104,21 @@ class Sponsor(models.Model):
     State = models.CharField(max_length=100, null=True, blank=True)
     City = models.CharField(max_length=100, null=True, blank=True)
     Zip_code = models.CharField(max_length=20, null=True, blank=True)
+    profile_photo = models.ImageField(upload_to='sponsor_photos/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.Full_name if self.Full_name else f"Sponsor - {self.id}"
+
+
+class SponsorSignUpOTP(models.Model):
+    email = models.EmailField(unique=True)
+    otp = models.CharField(max_length=5)
+    created_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"SignUp OTP for {self.email}: {self.otp}"
 
 
 class Community(models.Model):
@@ -130,6 +141,7 @@ class Student(models.Model):
     Gender = models.CharField(max_length=10, null=True, blank=True)
     Current_grade = models.IntegerField(null=True, blank=True)
     Enrollment_term = models.CharField(max_length=100, null=True, blank=True)
+    Enrollment_year = models.IntegerField(null=True, blank=True)
     Profile_photo = models.ImageField(upload_to='student_photos/', null=True, blank=True)
     Headshot = models.ImageField(upload_to='student_headshots/', null=True, blank=True)
     Bio = models.TextField(null=True, blank=True)

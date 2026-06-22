@@ -7,7 +7,7 @@ from rest_framework.decorators import api_view
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.core.exceptions import ObjectDoesNotExist
-from .models import Staff, PasswordResetOTP, Story, Student, Community
+from .models import Staff, PasswordResetOTP, Story, Student, Community, Sponsor, SponsorSignUpOTP
 from .serializers import StorySerializer, StudentSerializer
 
 
@@ -16,7 +16,7 @@ import string
 import random
 from django.core.mail import send_mail
 from django.conf import settings
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes
@@ -295,6 +295,7 @@ Arise Connect Team"""
                 [email],
                 fail_silently=False,
             )
+            print(f"{otp}")
         except Exception as e:
             print(f"Failed to send password reset OTP: {e}")
             if settings.DEBUG:
@@ -513,7 +514,11 @@ class StudentListCreateView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        data = request.data.copy()
+        if hasattr(request.data, 'dict'):
+            data = request.data.dict()
+        else:
+            data = request.data.copy()
+
         if 'Student_number' not in data or not data['Student_number']:
             import random
             while True:
@@ -554,6 +559,8 @@ class StudentListCreateView(APIView):
                     is_active=True
                 )
             data['CSO_id'] = str(staff.id)
+        else:
+            data['CSO_id'] = None
 
         serializer = StudentSerializer(data=data)
         if serializer.is_valid():
@@ -563,7 +570,7 @@ class StudentListCreateView(APIView):
 
 
 class StudentDetailView(APIView):
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_object(self, pk):
         try:
@@ -582,10 +589,154 @@ class StudentDetailView(APIView):
         student = self.get_object(pk)
         if not student:
             return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
-        serializer = StudentSerializer(student, data=request.data, partial=True)
+        
+        # Parse data safely
+        if hasattr(request.data, 'dict'):
+            data = request.data.dict()
+        else:
+            data = request.data.copy()
+
+        import json
+        
+        # Handle parsed json if passed as fields
+        demographics_data = data.pop('demographics', None)
+        guardian_data = data.pop('guardian', None)
+        health_conditions_data = data.pop('healthConditions', None)
+
+        # Handle Student fields mapping
+        if 'gender' in data:
+            data['Gender'] = data.pop('gender')
+        if 'birthday' in data:
+            data['Date_of_birth'] = data.pop('birthday')
+        if 'grade' in data:
+            data['Current_grade'] = data.pop('grade')
+        if 'enrollmentTerm' in data:
+            data['Enrollment_term'] = data.pop('enrollmentTerm')
+        if 'enrollmentYear' in data:
+            data['Enrollment_year'] = data.pop('enrollmentYear')
+        
+        school_name = data.pop('school', None)
+        if school_name:
+            community, _ = Community.objects.get_or_create(Name=school_name)
+            data['Community_id'] = str(community.id)
+        
+        cso_name = data.pop('cso', None)
+        if cso_name is not None:
+            if not cso_name or cso_name.lower() in ['none', 'blank', 'none / blank']:
+                data['CSO_id'] = None
+            else:
+                staff = Staff.objects.filter(full_name__iexact=cso_name).first()
+                if not staff:
+                    User = get_user_model()
+                    username = cso_name.lower().replace(' ', '.')
+                    user_email = f"{username}@example.com"
+                    user = User.objects.filter(email=user_email).first()
+                    if not user:
+                        user = User.objects.create_user(
+                            email=user_email,
+                            password='Password123',
+                            first_name=cso_name.split()[0] if cso_name.split() else cso_name,
+                            last_name=cso_name.split()[1] if len(cso_name.split()) > 1 else '',
+                            is_active=True,
+                            is_staff=True,
+                            is_superuser=False
+                        )
+                    staff = Staff.objects.create(
+                        user=user,
+                        full_name=cso_name,
+                        email=user_email,
+                        account_type='CSO',
+                        is_active=True
+                    )
+                data['CSO_id'] = str(staff.id)
+
+        serializer = StudentSerializer(student, data=data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+            def to_int(val, default=None):
+                if val == '' or val is None:
+                    return default
+                try:
+                    return int(val)
+                except ValueError:
+                    return default
+            
+            def to_bool(val):
+                if val == 'yes' or val is True:
+                    return True
+                if val == 'no' or val is False:
+                    return False
+                return False
+
+            if demographics_data:
+                if isinstance(demographics_data, str):
+                    try:
+                        demographics_data = json.loads(demographics_data)
+                    except Exception:
+                        pass
+                if isinstance(demographics_data, dict):
+                    demog, _ = DemographicHealthDetails.objects.get_or_create(Student=student)
+                    demog.Living_parents = demographics_data.get('parents', demog.Living_parents)
+                    demog.Mother_relationship = demographics_data.get('motherRel', demog.Mother_relationship)
+                    demog.Father_relationship = demographics_data.get('fatherRel', demog.Father_relationship)
+                    demog.Siblings = to_int(demographics_data.get('numSiblings'), demog.Siblings)
+                    demog.Distance_to_school = to_int(demographics_data.get('walkToSchool'), demog.Distance_to_school)
+                    demog.Meals_per_week = to_int(demographics_data.get('fullMeals'), demog.Meals_per_week)
+                    demog.People_in_the_house = to_int(demographics_data.get('householdPeople'), demog.People_in_the_house)
+                    demog.People_in_school = to_int(demographics_data.get('householdInSchool'), demog.People_in_school)
+                    demog.Reliable_income = to_int(demographics_data.get('reliableIncome'), demog.Reliable_income)
+                    demog.can_read = to_int(demographics_data.get('householdCanRead'), demog.can_read)
+                    demog.Distance_to_water = to_int(demographics_data.get('waterDistance'), demog.Distance_to_water)
+                    demog.Has_electricity = to_bool(demographics_data.get('hasElectricity'))
+                    demog.Has_water = to_bool(demographics_data.get('hasRunningWater'))
+                    demog.HIV_status = to_bool(demographics_data.get('hivPositive'))
+                    demog.Has_disability = to_bool(demographics_data.get('hasDisability'))
+                    demog.Demographic_comments = demographics_data.get('comments', demog.Demographic_comments)
+                    demog.save()
+
+            if guardian_data:
+                if isinstance(guardian_data, str):
+                    try:
+                        guardian_data = json.loads(guardian_data)
+                    except Exception:
+                        pass
+                if isinstance(guardian_data, dict):
+                    guard, _ = GuardianInformation.objects.get_or_create(student=student)
+                    guard.Guardian_name = guardian_data.get('name', guard.Guardian_name)
+                    guard.Guardian_phone_number = guardian_data.get('phone', guard.Guardian_phone_number)
+                    guard.Guardian_NRC = guardian_data.get('nrc', guard.Guardian_NRC)
+                    guard.Caretaker_occupation = guardian_data.get('occupation', guard.Caretaker_occupation)
+                    
+                    caretakers = guardian_data.get('primaryCaretaker', [])
+                    if isinstance(caretakers, list):
+                        guard.Primary_caretaker = ", ".join(caretakers)
+                    else:
+                        guard.Primary_caretaker = caretakers
+                    
+                    guard.Highest_education = guardian_data.get('education', guard.Highest_education)
+                    guard.Can_read = to_bool(guardian_data.get('canRead'))
+                    guard.Guardian_comments = guardian_data.get('notes', guard.Guardian_comments)
+                    guard.save()
+
+            if health_conditions_data is not None:
+                if isinstance(health_conditions_data, str):
+                    try:
+                        health_conditions_data = json.loads(health_conditions_data)
+                    except Exception:
+                        pass
+                if isinstance(health_conditions_data, list):
+                    HealthConditions.objects.filter(Student=student).delete()
+                    for condition_name in health_conditions_data:
+                        if condition_name:
+                            HealthConditions.objects.create(
+                                Student=student,
+                                Condition_name=condition_name,
+                                Condition_status='Active'
+                            )
+
+            response_serializer = StudentSerializer(student)
+            return Response(response_serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, pk):
@@ -594,6 +745,174 @@ class StudentDetailView(APIView):
             return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
         student.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SponsorSignUpView(APIView):
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        full_name = request.data.get('full_name', '').strip()
+        email = request.data.get('email', '').strip()
+        phone_number = request.data.get('phone_number', '').strip()
+        address_line_1 = request.data.get('address_line_1', '').strip()
+        address_line_2 = request.data.get('address_line_2', '').strip()
+        country = request.data.get('country', '').strip()
+        state = request.data.get('state', '').strip()
+        city = request.data.get('city', '').strip()
+        zip_code = request.data.get('zip_code', '').strip()
+        password = request.data.get('password', '')
+        profile_photo = request.FILES.get('profile_photo', None)
+
+        if not full_name or not email or not address_line_1 or not password:
+            return Response({"detail": "Full Name, Email, Address Line 1, and Password are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        User = get_user_model()
+        if User.objects.filter(email__iexact=email).exists():
+            return Response({"detail": "A user account with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generate a 5-digit verification OTP
+        import random
+        otp = "".join(random.choices("0123456789", k=5))
+
+        from django.db import transaction
+
+        try:
+            with transaction.atomic():
+                # Create the inactive user
+                name_parts = full_name.split(' ', 1)
+                first_name = name_parts[0]
+                last_name = name_parts[1] if len(name_parts) > 1 else ''
+
+                new_user = User.objects.create_user(
+                    email=email,
+                    password=password,
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_active=False, # inactive until email is verified via OTP
+                    is_staff=False,
+                    is_superuser=False
+                )
+
+                # Create the inactive staff mapped record (since custom SimpleJWT validate maps to user.staff, we must have one)
+                staff = Staff.objects.create(
+                    user=new_user,
+                    full_name=full_name,
+                    email=email,
+                    phone_number=phone_number,
+                    account_type='Sponsor',
+                    address_line_1=address_line_1,
+                    address_line_2=address_line_2,
+                    country=country,
+                    state=state,
+                    city=city,
+                    zip_code=zip_code,
+                    is_active=False,
+                    is_complete=True
+                )
+
+                # Create the Sponsor model record
+                import random
+                sponsor_number = f"SP{random.randint(100000, 999999)}"
+                while Sponsor.objects.filter(Sponsor_number=sponsor_number).exists():
+                    sponsor_number = f"SP{random.randint(100000, 999999)}"
+
+                sponsor = Sponsor.objects.create(
+                    User=new_user,
+                    staff=staff,
+                    Full_name=full_name,
+                    Email=email,
+                    Phone_number=phone_number,
+                    Sponsor_number=sponsor_number,
+                    Address_line_1=address_line_1,
+                    Address_line_2=address_line_2,
+                    Country=country,
+                    State=state,
+                    City=city,
+                    Zip_code=zip_code,
+                    profile_photo=profile_photo
+                )
+
+                # Store signup OTP
+                SponsorSignUpOTP.objects.update_or_create(
+                    email=email,
+                    defaults={'otp': otp}
+                )
+
+                # Send OTP email
+                subject = "Verify Your Email - Arise Connect Sponsor Registration"
+                message = f"""Hello {first_name},
+                
+Thank you for registering as a Sponsor on Arise Connect.
+
+Your 5-digit One-Time Password (OTP) to verify your email is: {otp}
+
+This OTP is valid for 10 minutes.
+
+Best regards,
+Arise Connect Team"""
+
+                try:
+                    send_mail(
+                        subject,
+                        message,
+                        settings.DEFAULT_FROM_EMAIL or 'noreply@ariseconnect.org',
+                        [email],
+                        fail_silently=False,
+                    )
+                    print(f"SignUp OTP: {otp}")
+                except Exception as e:
+                    print(f"Failed to send sponsor verification OTP email: {e}")
+                    if settings.DEBUG:
+                        print(f"\n========================================\n[DEBUG] SPONSOR SIGNUP OTP FOR {email}: {otp}\n========================================\n")
+                    else:
+                        raise e
+        except Exception as e:
+            # Transaction has been rolled back automatically
+            return Response({"detail": "Error sending verification email or creating account. Please try again later."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({"detail": "A verification OTP has been sent to your email."}, status=status.HTTP_201_CREATED)
+
+
+class SponsorVerifyEmailView(APIView):
+    def post(self, request):
+        email = request.data.get('email', '').strip()
+        otp = request.data.get('otp', '')
+
+        if not email or not otp:
+            return Response({"detail": "Email and OTP are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.utils import timezone
+        from datetime import timedelta
+
+        try:
+            otp_record = SponsorSignUpOTP.objects.get(email__iexact=email)
+        except SponsorSignUpOTP.DoesNotExist:
+            return Response({"detail": "Invalid or expired OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if timezone.now() > otp_record.created_at + timedelta(minutes=10):
+            otp_record.delete()
+            return Response({"detail": "OTP has expired. Please register again."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if otp_record.otp != otp:
+            return Response({"detail": "Incorrect OTP."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # OTP is correct, activate the user and their staff record
+        User = get_user_model()
+        try:
+            user = User.objects.get(email__iexact=email)
+            user.is_active = True
+            user.save()
+
+            if hasattr(user, 'staff'):
+                user.staff.is_active = True
+                user.staff.save()
+        except User.DoesNotExist:
+            return Response({"detail": "Associated user account not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Cleanup OTP
+        otp_record.delete()
+
+        return Response({"detail": "Email verified and account activated successfully."}, status=status.HTTP_200_OK)
 
 
 
