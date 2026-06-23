@@ -3,7 +3,8 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import (
     User, Staff, PasswordResetOTP, Sponsor, SponsorSignUpOTP, Community, Student,
     DemographicHealthDetails, GuardianInformation, HealthConditions,
-    Report, Sponsorship, Transaction, Story
+    Report, Sponsorship, Transaction, Story, AcademicRecord,
+    LessonPlan, WeeklyReport, Notification, ReportComment
 )
 
 @admin.register(User)
@@ -17,6 +18,14 @@ class UserAdmin(admin.ModelAdmin):
         ('Personal Info', {'fields': ('first_name', 'last_name', 'address')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
     )
+
+    def save_model(self, request, obj, form, change):
+        from django.contrib.auth.hashers import identify_hasher
+        try:
+            identify_hasher(obj.password)
+        except ValueError:
+            obj.set_password(obj.password)
+        super().save_model(request, obj, form, change)
 
 @admin.register(Staff)
 class StaffAdmin(admin.ModelAdmin):
@@ -92,6 +101,42 @@ class StoryAdmin(admin.ModelAdmin):
     list_display = ('name', 'age', 'graduation_year', 'title', 'profession')
     search_fields = ('name', 'title', 'profession')
     list_filter = ('graduation_year',)
+
+@admin.register(AcademicRecord)
+class AcademicRecordAdmin(admin.ModelAdmin):
+    list_display = ('student', 'year', 'grade', 'subject', 'mt1', 'et1', 'mt2', 'et2', 'mt3', 'et3')
+    search_fields = ('student__Full_name', 'grade', 'subject')
+    list_filter = ('year', 'grade', 'subject')
+
+
+@admin.register(LessonPlan)
+class LessonPlanAdmin(admin.ModelAdmin):
+    list_display = ('title', 'teacher', 'grade', 'subject', 'week_number', 'status')
+    search_fields = ('title', 'teacher__full_name', 'grade', 'subject')
+    list_filter = ('status', 'grade', 'subject')
+
+
+@admin.register(WeeklyReport)
+class WeeklyReportAdmin(admin.ModelAdmin):
+    list_display = ('teacher', 'week_ending_date', 'created_at')
+    search_fields = ('teacher__full_name', 'week_ending_date')
+    list_filter = ('week_ending_date',)
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('recipient', 'title', 'is_read', 'created_at')
+    search_fields = ('recipient__full_name', 'title')
+    list_filter = ('is_read', 'created_at')
+
+
+@admin.register(ReportComment)
+class ReportCommentAdmin(admin.ModelAdmin):
+    list_display = ('report', 'author', 'created_at')
+    search_fields = ('report__Student__Full_name', 'author__full_name', 'text')
+    list_filter = ('created_at',)
+
+
 
 
 

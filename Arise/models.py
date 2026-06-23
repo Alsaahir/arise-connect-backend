@@ -1,6 +1,21 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin, BaseUserManager
 import uuid
+import os
+from django.core.files.storage import default_storage
+
+def upload_to_s3(file_obj, folder_name):
+    if not file_obj:
+        return None
+    if isinstance(file_obj, str):
+        return file_obj
+    if hasattr(file_obj, 'name') and hasattr(file_obj, 'read'):
+        filename = os.path.basename(file_obj.name)
+        path = os.path.join(folder_name, filename).replace('\\', '/')
+        saved_path = default_storage.save(path, file_obj)
+        return default_storage.url(saved_path)
+    return None
+
 
 class CustomUserManager(BaseUserManager):
     def _create_user(self, email, password, first_name, last_name, **extra_fields):
@@ -31,6 +46,9 @@ class CustomUserManager(BaseUserManager):
         extra_fields.setdefault('is_active', True)
         extra_fields.setdefault('is_superuser', True)
         return self._create_user(email, password, first_name, last_name, **extra_fields)
+
+    def get_by_natural_key(self, username):
+        return self.get(**{f"{self.model.USERNAME_FIELD}__iexact": username})
 
 class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(db_index=True, unique=True, max_length=200, null=True, blank=True)
@@ -71,11 +89,16 @@ class Staff(models.Model):
     state = models.CharField(max_length=100, null=True, blank=True)
     city = models.CharField(max_length=100, null=True, blank=True)
     zip_code = models.CharField(max_length=20, null=True, blank=True)
-    profile_image = models.ImageField(upload_to='profile_images/', null=True, blank=True)
+    profile_image = models.URLField(max_length=500, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_complete = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if self.profile_image and not isinstance(self.profile_image, str):
+            self.profile_image = upload_to_s3(self.profile_image, 'profile_images')
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.full_name if self.full_name else f"Staff - {self.id}"
@@ -104,9 +127,14 @@ class Sponsor(models.Model):
     State = models.CharField(max_length=100, null=True, blank=True)
     City = models.CharField(max_length=100, null=True, blank=True)
     Zip_code = models.CharField(max_length=20, null=True, blank=True)
-    profile_photo = models.ImageField(upload_to='sponsor_photos/', null=True, blank=True)
+    profile_photo = models.URLField(max_length=500, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if self.profile_photo and not isinstance(self.profile_photo, str):
+            self.profile_photo = upload_to_s3(self.profile_photo, 'sponsor_photos')
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.Full_name if self.Full_name else f"Sponsor - {self.id}"
@@ -142,8 +170,8 @@ class Student(models.Model):
     Current_grade = models.IntegerField(null=True, blank=True)
     Enrollment_term = models.CharField(max_length=100, null=True, blank=True)
     Enrollment_year = models.IntegerField(null=True, blank=True)
-    Profile_photo = models.ImageField(upload_to='student_photos/', null=True, blank=True)
-    Headshot = models.ImageField(upload_to='student_headshots/', null=True, blank=True)
+    Profile_photo = models.URLField(max_length=500, null=True, blank=True)
+    Headshot = models.URLField(max_length=500, null=True, blank=True)
     Bio = models.TextField(null=True, blank=True)
     Is_sponsored = models.BooleanField(default=False)
     Fee_paying = models.BooleanField(default=False)
@@ -152,6 +180,13 @@ class Student(models.Model):
     CSO_id = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='CSO_id', related_name='cso_students')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        if self.Profile_photo and not isinstance(self.Profile_photo, str):
+            self.Profile_photo = upload_to_s3(self.Profile_photo, 'student_photos')
+        if self.Headshot and not isinstance(self.Headshot, str):
+            self.Headshot = upload_to_s3(self.Headshot, 'student_headshots')
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.Full_name if self.Full_name else f"Student - {self.id}"
@@ -220,10 +255,11 @@ class Report(models.Model):
     Student = models.ForeignKey(Student, on_delete=models.CASCADE, db_column='Student', related_name='reports')
     Content = models.TextField(null=True, blank=True)
     Prayer_request = models.TextField(null=True, blank=True)
-    Photo = models.ImageField(upload_to='report_photos/', null=True, blank=True)
+    Photo = models.URLField(max_length=500, null=True, blank=True)
     CSO = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='CSO', related_name='cso_reports')
     CSD = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='CSD', related_name='csd_reports')
     American_approver = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='American_approver', related_name='american_approved_reports')
+    american_editor = models.ForeignKey(Staff, on_delete=models.SET_NULL, null=True, blank=True, db_column='american_editor', related_name='american_edited_reports')
     Report_term = models.CharField(max_length=100, null=True, blank=True)
     status = models.CharField(max_length=100, null=True, blank=True)
     date_submitted = models.DateField(null=True, blank=True)
@@ -232,8 +268,24 @@ class Report(models.Model):
     Created_at = models.DateTimeField(auto_now_add=True)
     Updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        if self.Photo and not isinstance(self.Photo, str):
+            self.Photo = upload_to_s3(self.Photo, 'report_photos')
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Report for {self.Student.Full_name} ({self.Report_term})" if self.Student else f"Report - {self.id}"
+
+
+class ReportComment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report = models.ForeignKey(Report, on_delete=models.CASCADE, related_name='comments')
+    author = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='report_comments')
+    text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Comment by {self.author.full_name} on {self.report}"
 
 
 class Sponsorship(models.Model):
@@ -274,7 +326,7 @@ class Story(models.Model):
     quote = models.TextField(null=True, blank=True)
     story = models.TextField(null=True, blank=True)
     impact = models.TextField(null=True, blank=True)
-    image = models.ImageField(upload_to='story_images/', null=True, blank=True)
+    image = models.URLField(max_length=500, null=True, blank=True)
     image_url = models.URLField(max_length=500, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -283,8 +335,89 @@ class Story(models.Model):
         verbose_name = 'Story'
         verbose_name_plural = 'Stories'
 
+    def save(self, *args, **kwargs):
+        if self.image and not isinstance(self.image, str):
+            self.image = upload_to_s3(self.image, 'story_images')
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.name if self.name else f"Story - {self.id}"
+
+
+class AcademicRecord(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='academic_records')
+    year = models.IntegerField()
+    grade = models.CharField(max_length=50)
+    subject = models.CharField(max_length=100)
+    
+    mt1 = models.IntegerField(null=True, blank=True)
+    et1 = models.IntegerField(null=True, blank=True)
+    mt2 = models.IntegerField(null=True, blank=True)
+    et2 = models.IntegerField(null=True, blank=True)
+    mt3 = models.IntegerField(null=True, blank=True)
+    et3 = models.IntegerField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('student', 'year', 'grade', 'subject')
+
+    def __str__(self):
+        return f"{self.student.Full_name or 'Unknown'} - {self.grade} ({self.year}) - {self.subject}"
+
+
+class LessonPlan(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    teacher = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='lesson_plans')
+    title = models.CharField(max_length=255)
+    grade = models.CharField(max_length=50)
+    subject = models.CharField(max_length=100)
+    week_number = models.IntegerField()
+    objectives = models.TextField()
+    materials = models.TextField(null=True, blank=True)
+    procedures = models.TextField()
+    assessment = models.TextField(null=True, blank=True)
+    status = models.CharField(max_length=50, default='Draft') # 'Draft', 'Pending', 'Approved', 'Rejected'
+    headmaster_comment = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.title} - {self.teacher.full_name} ({self.status})"
+
+
+class WeeklyReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    teacher = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='weekly_reports')
+    week_ending_date = models.DateField()
+    social_events = models.TextField(null=True, blank=True)
+    behavioral_issues = models.TextField(null=True, blank=True)
+    health_issues = models.TextField(null=True, blank=True)
+    absenteeism = models.TextField(null=True, blank=True)
+    other_notes = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('teacher', 'week_ending_date')
+
+    def __str__(self):
+        return f"Weekly Report by {self.teacher.full_name} for week ending {self.week_ending_date}"
+
+
+class Notification(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recipient = models.ForeignKey(Staff, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Notification to {self.recipient.full_name}: {self.title}"
+
 
 
 
